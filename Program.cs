@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.IO.Ports;
 using System.Linq;
 using System.Text;
@@ -26,23 +27,25 @@ namespace CasioSharp
     {
         public int nbytes;        /* number of databytes in the record            */
         public int type;          /* record type                                  */
-        public int address;       /* load address in memory                       */
+        public uint address;       /* load address in memory                       */
     }
 
 
     static class Program
     {
         const bool debug = true;
-        const bool debug2 = true;
+        const bool debug2 = false;
         const bool NOCHECK = false;
 
         static int LastRead;
-        static int WriteStatus = XOFF;
+        static int WriteStatus = 0;
 
         const int TIMEOUT = 60500;
 
+        const int PRINT = 2;
         const int READ  = 1;
         const int WRITE = 0;
+
         const char CR = '\r';
         const char LF = '\n';
         const char XON = (char)0x11;
@@ -52,7 +55,10 @@ namespace CasioSharp
         const char STOP = (char)0x21;
         
         static SerialPort port;
-        public static bool Stopped = false;
+        static BinaryWriter outFile;
+        static BinaryReader inFile;
+
+        static bool Stopped = false;
         static int Direction = READ;
 
         static UInt32 Record;
@@ -61,46 +67,95 @@ namespace CasioSharp
         static byte[] DataBuffer = new byte[512];
         static byte[] WBuffer = new byte[1024];
 
-        static char[] buffer = new char[20];
+        static byte[] tempBuffer = new byte[1024];
 
         static char ch;
         static byte nbytes;
 
         static CasioHeader CHeader;
-
         static Header MHeader;
 
         static void Main(string[] args)
         {
-            Console.WriteLine("Hello World.");
-
-            var names = SerialPort.GetPortNames();
-            foreach (var item in names)
+            Console.WriteLine("Casio# reader.");
+            if (args.Length != 2)
             {
-                Console.WriteLine("Serial port: {0}", item);
+                PrintUsage();
+                return;
             }
 
-            port = new SerialPort("COM15", 9600);
+            switch (args[0].ToLower())
+            {
+                case "-r":
+                    Direction = READ;
+                    break;
+
+                case "-p":
+                    Direction = PRINT;
+                    break;
+
+                case "-w":
+                    Direction = WRITE;
+                    break;
+
+                default:
+                    PrintUsage();
+                    return;
+            }
+
+            if (Direction == PRINT)
+            {
+                inFile = new BinaryReader(new FileStream(args[1], FileMode.Open, FileAccess.Read));
+
+                while (!Stopped)
+                {
+                    ReadFile();
+                    DisplayStatus();
+                }
+                return;
+            }
+
+            if (Direction == WRITE)
+            {
+                return;
+            }
+
+
+            port = new SerialPort("COM15", 4800);
             port.Parity = Parity.None;
             port.StopBits = StopBits.One;
             port.DataBits = 8;
-            port.Handshake = Handshake.XOnXOff;
-            port.RtsEnable = true;
-            port.DtrEnable = true;
+            port.Handshake = Handshake.None;  // should be XONXOFF?
+            port.RtsEnable = false; // RTS -12v
+            port.DtrEnable = true;  // DTR +12v
             port.ReadTimeout = SerialPort.InfiniteTimeout;
             port.WriteTimeout = SerialPort.InfiniteTimeout;
             port.Encoding = Encoding.ASCII;
             
             port.Open();
+
+            outFile = new BinaryWriter(new FileStream(args[0], FileMode.OpenOrCreate, FileAccess.Write));
+                        
             while (!Stopped)
             {
                 WaitForCasio();
 
                 while (!Stopped)
                 {
-                    ReadRecord();
+                    ReadLine();
+                    DisplayStatus();
+
+                    // write out header in little endian format
+                    outFile.Write((byte)MHeader.nbytes);
+                    outFile.Write((byte)MHeader.type);
+                    outFile.Write((short)MHeader.address);
+
+                    // write out buffer and include checksum
+                    outFile.Write(DataBuffer, 0, MHeader.nbytes + 1);
                 }
             }
+
+            outFile.Close();
         }
 
         static void WaitForCasio()
@@ -156,16 +211,34 @@ namespace CasioSharp
              */
             if (debug2)
                 Console.Write("\nReadheader waiting for a :\n");
+
+            int count = 0;
             do
             {
                 CHeader.marker = ReadByte(Mode.WAIT);
+                tempBuffer[count] = (byte)CHeader.marker;
+                count++;
+
+                // Casio was paused waiting for user to select next item, send XON to resume?
+                if (count > 1 && CHeader.marker == LF && tempBuffer[count-2] == CR)
+                {
+                    WriteByte(XON);
+                    count = 0;
+                    Console.Write(".");
+                }
             }
             while (CHeader.marker != ':' && !Stopped);
             if (debug2)
                 Console.Write("\nReadheader got a :\n");
+            if (debug)
+            {
+                if (count > 1)
+                    Console.Write("\nExtra data before header: '{0}'\n", Encoding.ASCII.GetString(tempBuffer, 0, count));
+            }
 
             CHeader.nbytes = ((ReadByte(Mode.WAIT) & 0xff) << 8) |
               (ReadByte(Mode.WAIT) & 0xff);
+
             if (debug2)
                 Console.Write("\nReadheader got nbytes {0:x} \n", CHeader.nbytes);
 
@@ -189,7 +262,7 @@ namespace CasioSharp
 
             /*
              * Casio header is read, now translate it
-             * into something usefull
+             * into something useful
              */
             MHeader.nbytes = (atoh(CHeader.nbytes >> 8) << 4) |
               atoh(CHeader.nbytes & 0xff);
@@ -200,19 +273,21 @@ namespace CasioSharp
             MHeader.type = (atoh(CHeader.type >> 8) << 4) |
               atoh(CHeader.type & 0xff);
 
-            if (debug)
+            if (debug2)
                 Console.Write("\nReadheader: frame type {0:x} \n", MHeader.type);
 
-            MHeader.address = (atoh(CHeader.high >> 8) << 4) |
+            // Casio doesn't update high byte when records are larger than 256 bytes, so kind of useless.
+            MHeader.address = (uint)(atoh(CHeader.high >> 8) << 4) |
               atoh(CHeader.high & 0xff);
 
             MHeader.address *= 256;
 
-            MHeader.address += (atoh(CHeader.low >> 8) << 4) |
+            MHeader.address += (uint)(atoh(CHeader.low >> 8) << 4) |
               atoh(CHeader.low & 0xff);
 
             if (debug2)
                 Console.Write("\nReadheader translated address {0:x} \n", MHeader.address);
+
         }
 
         /*
@@ -233,6 +308,12 @@ namespace CasioSharp
 
             if (debug2)
                 Console.Write("\nDone ReadHeader\n");
+
+            if (debug)
+            {
+                Console.Write("\nMHeader bytes:{0} type:{1} address:0x{2:X4}\n", MHeader.nbytes, MHeader.type, MHeader.address);
+            }
+
             if (MHeader.nbytes == 0x00)
             {
                 if (debug)
@@ -240,7 +321,7 @@ namespace CasioSharp
                 if (MHeader.address == 0x0100)
                 {
                     if (debug)
-                        Console.Write("\nsending ack to continue tarnsmission \n");
+                        Console.Write("\nsending ack to continue transmission \n");
                     WriteByte(ACK);
                 }
             }
@@ -251,7 +332,7 @@ namespace CasioSharp
             {
                 DataBuffer[nbytes] = ReadHex();
 
-                if (debug)
+                if (debug2)
                     Console.Write("\nDatabytes --->  {0:x}\n", DataBuffer[nbytes]);
 
                 /* store the databyte into the data file */
@@ -266,6 +347,16 @@ namespace CasioSharp
 
             if (debug2)
                 Console.Write("\nDone readline\n");
+        }
+
+        static void ReadFile()
+        {
+            // Read Header and data bytes in little endian format
+            MHeader.nbytes = inFile.ReadByte();
+            MHeader.type = inFile.ReadByte();
+            MHeader.address = inFile.ReadUInt16();
+
+            inFile.ReadBytes(MHeader.nbytes + 1).CopyTo(DataBuffer, 0);
         }
 
         /*
@@ -450,7 +541,7 @@ namespace CasioSharp
                 Console.Write("\n Display status: Mheader,nbytes {0}\n", MHeader.nbytes);
                 Console.Write("\n Display status: DatadBuffer[0] {0}\n", DataBuffer[0]);
             }
-            if (MHeader.nbytes == 0x02)
+            if (MHeader.nbytes == 0x02 && DataBuffer[1] == 0x00)
             {
                 switch (DataBuffer[0])
                 {
@@ -502,7 +593,7 @@ namespace CasioSharp
                     default:
                         {
 //                            fprintf(data, "\n===================== > UNKNOWN? < =============\n");
-                            Console.Write("\nSection 0x%02x:    ", DataBuffer[0]);
+                            Console.Write("\nSection 0x{0:X2}:    ", DataBuffer[0]);
                             Record = 0;
                             break;
                         }
@@ -512,13 +603,17 @@ namespace CasioSharp
             {
                 if (MHeader.address == 0x0100)
                 {
-                    Console.Write("\b\b\b{0}", ++Record);
+                    Console.Write("End Record# {0}\n\n", ++Record);
                 }
                 else if (MHeader.address == 0xff00)
                 {
                     Console.Write("\nDONE!!\n");
                     Stopped = true;
                 }
+            }
+            else
+            {
+                Console.WriteLine("{0}", Encoding.ASCII.GetString(DataBuffer, 0, MHeader.nbytes));
             }
         }
 
@@ -567,73 +662,35 @@ namespace CasioSharp
           return 0;
         }
 
-    static void
-    sig_catch(int signo)
-    {
-        Console.Write("\nsignal caught %d\n", signo);
-        Console.Write("\nsignal caught %d\n", signo);
-        /*inform */
-        Console.Write("\nstopping contact with casio \n\n");
-        /* should also reset the serial port being used by
-           casio and close all files */
-        terminate();
-    }
-#endif
-#if false
-    int tty_reset(int fd)       /* restore terminal's mode */
-    {
-        if (fd == Port)
+        static void
+        sig_catch(int signo)
         {
-            if (tcsetattr(fd, TCSAFLUSH, &oldterm) < 0)
-                Console.Write("\nFailed to reset serial port\n");
-            return (-1);
+            Console.Write("\nsignal caught %d\n", signo);
+            Console.Write("\nsignal caught %d\n", signo);
+            /*inform */
+            Console.Write("\nstopping contact with casio \n\n");
+            /* should also reset the serial port being used by
+               casio and close all files */
+            terminate();
         }
-        else if (fd == STDIN_FILENO)
-        {
-            if (tcsetattr(fd, TCSAFLUSH, &save_stdin) < 0)
-                Console.Write("\nFailed to reset stdin\n");
-            return (-1);
-        }
-        return (0);
-    }
 
-        /* the terminator */
-        static void Terminate()
+        int tty_reset(int fd)       /* restore terminal's mode */
         {
-            blkflg |= O_NONBLOCK;
-            if (fcntl(Port, F_SETFL, blkflg) < 0)
+            if (fd == Port)
             {
-                Console.Write("\nexiting ..\n");
-                exit(-1);
+                if (tcsetattr(fd, TCSAFLUSH, &oldterm) < 0)
+                    Console.Write("\nFailed to reset serial port\n");
+                return (-1);
             }
-            if (debug)
-                Console.Write("\nterminate: writting stop to port\n");
-            Stopped = true;
-            WriteByte(STOP);
-
-            /*reset terminals */
-            if (debug)
-                Console.Write("\n reseting stdin\n");
-            tty_reset(STDIN_FILENO);
-            if (debug)
-                Console.Write("\n reseting port\n");
-            tty_reset(Port);
-
-            /*close all open files */
-            if (debug)
-                Console.Write("\n closing casiofile\n");
-            fclose(casiofile);
-            if (debug)
-                Console.Write("\n closing Port\n");
-            close(Port);
-            if (debug)
-                Console.Write("\n closing data file\n");
-            fclose(data);
-            if (debug)
-                Console.Write("\n closing debug file\n");
-            fclose(dbg);
-            exit(0);
+            else if (fd == STDIN_FILENO)
+            {
+                if (tcsetattr(fd, TCSAFLUSH, &save_stdin) < 0)
+                    Console.Write("\nFailed to reset stdin\n");
+                return (-1);
+            }
+            return (0);
         }
+
 #endif
 
 #if false
@@ -718,7 +775,7 @@ namespace CasioSharp
             if (LastRead != 0)
             {
                 if (debug2)
-                    Console.Write("we did read %c before ==> just return \n", LastRead);
+                    Console.Write("we did read {0} before ==> just return \n", (char)LastRead);
                 i = LastRead;
                 LastRead = 0;
                 return (i);
@@ -752,12 +809,11 @@ namespace CasioSharp
                         Console.Write("\n trying to read\n ");
 
                     /* read a char and store in i */
-                    i = ReadByte(Mode.WAIT);
+                    if (mode == Mode.NOWAIT && port.BytesToRead == 0)
+                        return -1;
 
-#if false
-// # ifndef __i386__
-                    NTOHL(i);
-#endif
+                    i = port.ReadByte();
+
                     if (debug2)
                         Console.Write("\n read\n ");
                     if (i == -1)
@@ -768,7 +824,7 @@ namespace CasioSharp
                     if (i > 0)
                     {
                         if (debug2)
-                            Console.Write("\nsuccesful READ\n");
+                            Console.Write("\nsuccessful READ\n");
                     }
 #if false
                     if (j == -1)
@@ -777,8 +833,8 @@ namespace CasioSharp
                             Console.Write("\nUnsuccessfull READ\n");
                     }
 #endif
-                    if (debug)
-                        Console.Write("Received byte {0}\n", (char)i);
+                    if (debug2)
+                        Console.Write("Received byte {0:X2}\n", i);
 
                     i &= 0xff;
                     if (i == STOP)
@@ -844,7 +900,7 @@ namespace CasioSharp
 
             TimeOut = 0;
             if (debug)
-                Console.Write("\n sending {0:x} to serial port \n", d);
+                Console.Write("\n sending {0:X2} to serial port \n", (int)d);
 
             /* write the character to the serial port */
             try
@@ -853,7 +909,7 @@ namespace CasioSharp
             }
             catch(Exception)
             {
-                Console.Write("\nERROR WriteByte: couldnt write the char {0} to serial port \n", d);
+                Console.Write("\nERROR WriteByte: couldnt write the char {0:X2} to serial port \n", (int)d);
                 Terminate();
             }
             if (Direction == WRITE)
@@ -863,8 +919,18 @@ namespace CasioSharp
             }
         }
 
-        static void ReadRecord()
+        static void PrintUsage()
         {
+            Console.WriteLine("CasioSharp.exe -[r|w|p] <file>");
+            Console.WriteLine("   CasioSharp.exe -r <outFile>  -- backup Casio to outFile");
+            Console.WriteLine("   CasioSharp.exe -w <inFile>  -- write inFile to Casio");
+            Console.WriteLine("   CasioSharp.exe -p <inFile>  -- print inFile\n");
+            var names = SerialPort.GetPortNames();
+            foreach (var item in names)
+            {
+                Console.WriteLine("Serial port: {0}", item);
+            }
+
 
         }
     }
