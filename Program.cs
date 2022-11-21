@@ -123,7 +123,7 @@ namespace CasioSharp
 
             port = new SerialPort("COM15", 4800);
             port.Parity = Parity.None;
-            port.StopBits = StopBits.One;
+            port.StopBits = StopBits.Two;
             port.DataBits = 8;
             port.Handshake = Handshake.None;  // should be XONXOFF?
             port.RtsEnable = false; // RTS -12v
@@ -233,7 +233,15 @@ namespace CasioSharp
             if (debug)
             {
                 if (count > 1)
-                    Console.Write("\nExtra data before header: '{0}'\n", Encoding.ASCII.GetString(tempBuffer, 0, count));
+                {
+                    StringBuilder data = new StringBuilder();
+
+                    for (int extra = 0; extra < count - 1; extra++)
+                    {
+                        data.Append(String.Format("0x{0:X2} ", tempBuffer[extra]));
+                    }
+                    Console.Write("\nExtra data before header: {0}\n", data);
+                }
             }
 
             CHeader.nbytes = ((ReadByte(Mode.WAIT) & 0xff) << 8) |
