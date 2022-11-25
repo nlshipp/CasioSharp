@@ -1,0 +1,36 @@
+  revision history:
+ 
+=========================================DOS==================
+   version    date      programmer          comment
+ 
+   1.00     8 aug 1993  L. Muhlenberg   Initial attempt
+   1.01     9 aug 1993  L. Muhlenberg   Added XON/XOFF protocol
+                                        Added version number
+                                        Added progress indicator
+   1.02    10 aug 1993  L. Muhlenberg   Cleaned up program
+   1.03    11 aug 1993  L. Muhlenberg   Added info text (? or H option)
+                                        Added 9600 baud support
+
+=========================================LINUX==================
+   version    date      programmer          comment
+
+   2.00    25 oct 1995  J. Hadi Salim   refer to below 
+
+   ported to LINUX (quiet a few changes; skeleton still the same)
+   posix compliant -- which means it could be compiled on any
+   Unix with (hopefully) minimal effort. Also added some new features
+
+=========================================LINUX=&=Solaris 2.x,sunos4 and 5====
+   version    date      programmer          comment
+
+   2.01    07 nov 1995  Birko Bergt     Added hton and ntoh stuff
+                                        tty handling for Solaris 2.x
+					(the same tty-handling is used in
+					the two sunos versions)
+	   07 dec 1995 J. Hadi Salim    Introduced Imakefile configuration
+
+=========================================.NET====
+   version    date      programmer          comment
+
+   3.00    25 nov 2022  Neil Shipp     Rewrite in C# for PC.
+

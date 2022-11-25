@@ -1,0 +1,5 @@
+This is a direct port of the Casio 2.0.1 Unix backup tool for the Casio BOSS SF series organizers to C#.  I still have my Casio SF-4300B which I use as an address book and I wanted to back it up, plus I wanted to dump out some of my old back up files from 20 years back. 
+
+The original Unix sources were found here: http://www.imslsoft.com/others.htm  Direct link: http://www.ibiblio.org/pub/historic-linux/ftp-archives/sunsite.unc.edu/Sep-29-1996/apps/comm/casio-2.0.1.tgz
+
+This builds with Visual Studio 2015.
