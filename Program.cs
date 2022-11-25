@@ -62,14 +62,12 @@ namespace CasioSharp
         static int Direction = READ;
 
         static UInt32 Record;
-        static int blkflg;
 
         static byte[] DataBuffer = new byte[512];
         static byte[] WBuffer = new byte[1024];
 
         static byte[] tempBuffer = new byte[1024];
 
-        static char ch;
         static byte nbytes;
 
         static CasioHeader CHeader;
@@ -284,7 +282,8 @@ namespace CasioSharp
             if (debug2)
                 Console.Write("\nReadheader: frame type {0:x} \n", MHeader.type);
 
-            // Casio doesn't update high byte when records are larger than 256 bytes, so kind of useless.
+            // High order bits are actually encoded in lower nybble of type field
+            // CHeader.high field is record subtype.
             MHeader.address = (uint)(atoh(CHeader.high >> 8) << 4) |
               atoh(CHeader.high & 0xff);
 
@@ -319,7 +318,7 @@ namespace CasioSharp
 
             if (debug)
             {
-                Console.Write("\nMHeader bytes:{0} type:{1} address:0x{2:X4}\n", MHeader.nbytes, MHeader.type, MHeader.address);
+                Console.Write("\nMHeader bytes:{0} type:{1} offset:0x{2:X4}\n", MHeader.nbytes, MHeader.type & 0xF0, MHeader.address + (MHeader.type & 0x0F) << 8);
             }
 
             if (MHeader.nbytes == 0x00)
@@ -342,11 +341,7 @@ namespace CasioSharp
 
                 if (debug2)
                     Console.Write("\nDatabytes --->  {0:x}\n", DataBuffer[nbytes]);
-
-                /* store the databyte into the data file */
-//                fprintf(data, "%c", DataBuffer[nbytes]);
             }
-//            fprintf(data, "\n");
 
             /*
              * Read the checksum
@@ -462,25 +457,6 @@ namespace CasioSharp
 
         }
 
-        /*
-         * U p p e r C a s e
-         *
-         *  Turn a string into all uppercase characters
-         */
-
-        static void UpperCase(char* s)
-        {
-            while (*s)
-            {
-                if (*s >= 'a' && *s <= 'z')
-                {
-                    *s = *s - 'a' + 'A';
-                }
-
-                s++;
-            }
-        }
-
 #endif
 
         /*
@@ -558,7 +534,6 @@ namespace CasioSharp
                             Console.Write("\nPhone:         ");
                             if (debug)
                                 Console.Write("\n Data ==> phone\n");
-//                            fprintf(data, "\n===================== > phone < ==========\n");
                             Record = 0;
                             break;
                         }
@@ -567,7 +542,6 @@ namespace CasioSharp
                             Console.Write("\nMemo:          ");
                             if (debug)
                                 Console.Write("\n Data ==> memo\n");
-//                            fprintf(data, "\n===================== > MEMO < =============\n");
                             Record = 0;
                             break;
                         }
@@ -576,7 +550,6 @@ namespace CasioSharp
                             Console.Write("\nReminder:      ");
                             if (debug)
                                 Console.Write("\n Data ==> reminder\n");
-//                            fprintf(data, "\n===================== > REMINDER < =============\n");
                             Record = 0;
                             break;
                         }
@@ -585,7 +558,6 @@ namespace CasioSharp
                             Console.Write("\nSchedule:      ");
                             if (debug)
                                 Console.Write("\n Data ==> schedule\n");
-//                            fprintf(data, "\n===================== > SCHEDULE < =============\n");
                             Record = 0;
                             break;
                         }
@@ -594,13 +566,11 @@ namespace CasioSharp
                             Console.Write("\nCalendar:      ");
                             if (debug)
                                 Console.Write("\n Data ==> calendar\n");
-//                            fprintf(data, "\n===================== > Calendar < =============\n");
                             Record = 0;
                             break;
                         }
                     default:
                         {
-//                            fprintf(data, "\n===================== > UNKNOWN? < =============\n");
                             Console.Write("\nSection 0x{0:X2}:    ", DataBuffer[0]);
                             Record = 0;
                             break;
@@ -731,42 +701,26 @@ namespace CasioSharp
 
         static void Terminate()
         {
-#if false
-            blkflg |= O_NONBLOCK;
-            if (fcntl(Port, F_SETFL, blkflg) < 0)
-            {
-                fprintf(stderr, "\nexiting ..\n");
-                exit(-1);
-            }
-#endif
             if (debug)
                 Console.Write("\nterminate: writting stop to port\n");
             Stopped = true;
             WriteByte(STOP);
 
-            /*reset terminals */
-            if (debug)
-                Console.Write("\n reseting stdin\n");
-//            tty_reset(STDIN_FILENO);
-            if (debug)
-                Console.Write("\n reseting port\n");
-//            tty_reset(Port);
-
             /*close all open files */
             if (debug)
                 Console.Write("\n closing casiofile\n");
-//            fclose(casiofile);
+
+            if (outFile != null)
+                outFile.Close();
+
+            if (inFile != null)
+                inFile.Close();
+
             if (debug)
                 Console.Write("\n closing Port\n");
+
             port.Close();
-            if (debug)
-                Console.Write("\n closing data file\n");
-//            fclose(data);
-            if (debug)
-                Console.Write("\n closing debug file\n");
-//            fclose(dbg);
-//            exit(0);
-            throw new Exception();
+            System.Environment.Exit(-1);
         }
 
         /*
